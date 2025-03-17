@@ -216,15 +216,10 @@ def TrackImages():
                     # Check if attendance is already marked
                     if not is_attendance_marked(Id, current_date):
                         mark_attendance(Id, name, current_date, current_time)
-                        # Insert into Treeview with a tag for present students
+
+                    # Insert into Treeview with a tag for present students
+                    if not any(tv.item(child)['text'] == Id for child in tv.get_children()):
                         tv.insert('', 'end', text=Id, values=(name, current_date, current_time), tags=('present',))
-                    else:
-                        # Display alert message
-                        mess.showinfo(title='Already Present', message=f"{name} is already marked present for today.")
-                        # Deactivate camera after 2 seconds
-                        window.after(2000, lambda: cam.release())
-                        window.after(2000, cv2.destroyAllWindows)
-                        return
                 else:
                     cv2.putText(im, "Unknown", (x, y - 10), font, 1, (255, 255, 255), 2)
 
