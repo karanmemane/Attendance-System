@@ -193,38 +193,51 @@ def TrackImages():
     cam = cv2.VideoCapture(0)
     font = cv2.FONT_HERSHEY_SIMPLEX
 
-    while True:
-        ret, im = cam.read()
-        if not ret:
-            break
+    try:
+        while True:
+            ret, im = cam.read()
+            if not ret:
+                break
 
-        gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
-        faces = faceCascade.detectMultiScale(gray, 1.2, 5)
+            gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
+            faces = faceCascade.detectMultiScale(gray, 1.2, 5)
 
-        for (x, y, w, h) in faces:
-            cv2.rectangle(im, (x, y), (x + w, y + h), (225, 0, 0), 2)
-            Id, conf = recognizer.predict(gray[y:y + h, x:x + w])
+            for (x, y, w, h) in faces:
+                cv2.rectangle(im, (x, y), (x + w, y + h), (225, 0, 0), 2)
+                Id, conf = recognizer.predict(gray[y:y + h, x:x + w])
 
-            name = fetch_student_name(Id)
-            if name:
-                cv2.putText(im, name, (x, y - 10), font, 1, (255, 255, 255), 2)
+                name = fetch_student_name(Id)
+                if name:
+                    cv2.putText(im, name, (x, y - 10), font, 1, (255, 255, 255), 2)
 
-                current_date = datetime.datetime.now().strftime("%Y-%m-%d")
-                if not is_attendance_marked(Id, current_date):
+                    current_date = datetime.datetime.now().strftime("%Y-%m-%d")
                     current_time = datetime.datetime.now().strftime("%H:%M:%S")
-                    mark_attendance(Id, name, current_date, current_time)
-                    tv.insert('', 'end', text=Id, values=(name, current_date, current_time))
-            else:
-                cv2.putText(im, "Unknown", (x, y - 10), font, 1, (255, 255, 255), 2)
 
-        cv2.imshow('Taking Attendance', im)
+                    # Check if attendance is already marked
+                    if not is_attendance_marked(Id, current_date):
+                        mark_attendance(Id, name, current_date, current_time)
+                        # Insert into Treeview with a tag for present students
+                        tv.insert('', 'end', text=Id, values=(name, current_date, current_time), tags=('present',))
+                    else:
+                        # Display alert message
+                        mess.showinfo(title='Already Present', message=f"{name} is already marked present for today.")
+                        # Deactivate camera after 2 seconds
+                        window.after(2000, lambda: cam.release())
+                        window.after(2000, cv2.destroyAllWindows)
+                        return
+                else:
+                    cv2.putText(im, "Unknown", (x, y - 10), font, 1, (255, 255, 255), 2)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            cv2.imshow('Taking Attendance', im)
 
-    cam.release()
-    cv2.destroyAllWindows()
-    cv2.waitKey(1)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+    except Exception as e:
+        mess.showerror(title='Error', message=str(e))
+    finally:
+        cam.release()
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)
 
 def fetch_student_name(Id):
     try:
@@ -269,23 +282,6 @@ def mark_attendance(Id, name, current_date, current_time):
     finally:
         if 'connection' in locals():
             connection.close()
-def is_attendance_marked(Id, current_date):
-    connection = get_db_connection()
-    cursor = connection.cursor()
-    cursor.execute("SELECT * FROM Attendance WHERE student_id = %s AND date = %s", (Id, current_date))
-    existing_entry = cursor.fetchone()
-    cursor.close()
-    connection.close()
-    return existing_entry is not None
-
-def mark_attendance(Id, name, current_date, current_time):
-    connection = get_db_connection()
-    cursor = connection.cursor()
-    cursor.execute("INSERT INTO Attendance (student_id, name, date, time) VALUES (%s, %s, %s, %s)",
-                   (Id, name, current_date, current_time))
-    connection.commit()
-    cursor.close()
-    connection.close()
 
 def display_registration_details():
     display_window = tk.Toplevel(window)
@@ -480,6 +476,8 @@ tv.heading('time', text='TIME')
 style = ttk.Style()
 style.configure("Treeview", rowheight=25, font=('Helvetica', 12))
 style.configure("Treeview.Heading", font=('Helvetica', 13, 'bold'))
+style.map('Treeview', background=[('selected', 'blue')], foreground=[('selected', 'white')])
+tv.tag_configure('present', background='lightgreen')
 
 scroll = ttk.Scrollbar(left_frame, orient='vertical', command=tv.yview)
 scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -535,7 +533,6 @@ trainImg = ttk.Button(right_frame,
                       command=TrainImages,
                       style="TButton")
 trainImg.pack(pady=10)  # Increased padding
-
 
 quitWindow = tk.Button(right_frame, text="Quit", command=window.destroy, fg="black", bg="red",
                        font=('Helvetica', 14, 'bold'))
