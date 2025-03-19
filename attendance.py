@@ -14,6 +14,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
 from reportlab.lib import colors
 
 # Load environment variables for database configuration
+import os
 db_config = {
     'user': os.getenv('DB_USER', 'root'),
     'password': os.getenv('DB_PASSWORD', 'Karan@8087'),
@@ -98,6 +99,11 @@ def TakeImages():
         assure_path_exists("StudentDetails/")
         assure_path_exists("TrainingImage/")
 
+        # Ensure txt and txt2 are initialized
+        if not txt or not txt2:
+            mess.showerror(title='Initialization Error', message='Widgets are not initialized properly.')
+            return
+
         Id = txt.get().strip()
         name = txt2.get().strip()
         if name.replace(" ", "").isalpha():
@@ -117,7 +123,7 @@ def TakeImages():
                     image_path = f"TrainingImage/{name}.{Id}.{sampleNum}.jpg"
                     cv2.imwrite(image_path, gray[y:y + h, x:x + w])
                     cv2.imshow('Taking Images', img)
-                if cv2.waitKey(100) & 0xFF == ord('q') or sampleNum >= 20:
+                if cv2.waitKey(100) & 0xFF == ord('q') or sampleNum >= 10:
                     break
             cam.release()
             cv2.destroyAllWindows()
@@ -193,101 +199,76 @@ def TrackImages():
     cam = cv2.VideoCapture(0)
     font = cv2.FONT_HERSHEY_SIMPLEX
 
-    try:
-        while True:
-            ret, im = cam.read()
-            if not ret:
-                break
+    while True:
+        ret, im = cam.read()
+        if not ret:
+            break
 
-            gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
-            faces = faceCascade.detectMultiScale(gray, 1.2, 5)
+        gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
+        faces = faceCascade.detectMultiScale(gray, 1.2, 5)
 
-            for (x, y, w, h) in faces:
-                cv2.rectangle(im, (x, y), (x + w, y + h), (225, 0, 0), 2)
-                Id, conf = recognizer.predict(gray[y:y + h, x:x + w])
+        for (x, y, w, h) in faces:
+            cv2.rectangle(im, (x, y), (x + w, y + h), (225, 0, 0), 2)
+            Id, conf = recognizer.predict(gray[y:y + h, x:x + w])
 
-                name = fetch_student_name(Id)
-                if name:
-                    cv2.putText(im, name, (x, y - 10), font, 1, (255, 255, 255), 2)
+            name = fetch_student_name(Id)
+            if name:
+                cv2.putText(im, name, (x, y - 10), font, 1, (255, 255, 255), 2)
 
-                    current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+                current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+                if not is_attendance_marked(Id, current_date):
                     current_time = datetime.datetime.now().strftime("%H:%M:%S")
+                    mark_attendance(Id, name, current_date, current_time)
+                    tv.insert('', 'end', text=Id, values=(name, current_date, current_time))
+            else:
+                cv2.putText(im, "Unknown", (x, y - 10), font, 1, (255, 255, 255), 2)
 
-                    # Check if attendance is already marked
-                    if not is_attendance_marked(Id, current_date):
-                        mark_attendance(Id, name, current_date, current_time)
+        cv2.imshow('Taking Attendance', im)
 
-                    # Insert into Treeview with a tag for present students
-                    if not any(tv.item(child)['text'] == Id for child in tv.get_children()):
-                        tv.insert('', 'end', text=Id, values=(name, current_date, current_time), tags=('present',))
-                else:
-                    cv2.putText(im, "Unknown", (x, y - 10), font, 1, (255, 255, 255), 2)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-            cv2.imshow('Taking Attendance', im)
-
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-    except Exception as e:
-        mess.showerror(title='Error', message=str(e))
-    finally:
-        cam.release()
-        cv2.destroyAllWindows()
-        cv2.waitKey(1)
+    cam.release()
+    cv2.destroyAllWindows()
+    cv2.waitKey(1)
 
 def fetch_student_name(Id):
-    try:
-        connection = get_db_connection()
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT name FROM StudentDetails WHERE student_id = %s", (Id,))
-            name = cursor.fetchone()
-            if name:
-                return name[0]
-            else:
-                return None
-    except mysql.connector.Error as err:
-        print(f"Database error: {err}")
-        return None
-    finally:
-        if 'connection' in locals():
-            connection.close()
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute("SELECT name FROM StudentDetails WHERE student_id = %s", (Id,))
+    name = cursor.fetchone()
+    cursor.close()
+    connection.close()
+    return name[0] if name else None
 
 def is_attendance_marked(Id, current_date):
-    try:
-        connection = get_db_connection()
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM Attendance WHERE student_id = %s AND date = %s", (Id, current_date))
-            existing_entry = cursor.fetchone()
-            return existing_entry is not None
-    except mysql.connector.Error as err:
-        print(f"Database error: {err}")
-        return False
-    finally:
-        if 'connection' in locals():
-            connection.close()
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute("SELECT * FROM Attendance WHERE student_id = %s AND date = %s", (Id, current_date))
+    existing_entry = cursor.fetchone()
+    cursor.close()
+    connection.close()
+    return existing_entry is not None
 
 def mark_attendance(Id, name, current_date, current_time):
-    try:
-        connection = get_db_connection()
-        with connection.cursor() as cursor:
-            cursor.execute("INSERT INTO Attendance (student_id, name, date, time) VALUES (%s, %s, %s, %s)",
-                           (Id, name, current_date, current_time))
-            connection.commit()
-    except mysql.connector.Error as err:
-        print(f"Database error: {err}")
-    finally:
-        if 'connection' in locals():
-            connection.close()
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute("INSERT INTO Attendance (student_id, name, date, time) VALUES (%s, %s, %s, %s)",
+                   (Id, name, current_date, current_time))
+    connection.commit()
+    cursor.close()
+    connection.close()
 
 def display_registration_details():
     display_window = tk.Toplevel(window)
     display_window.title("Registered Details")
-    display_window.geometry("600x450")
+    display_window.geometry("600x400")
     display_window.configure(bg="#f0f0f0")
 
     style = ttk.Style()
     style.configure("Treeview", rowheight=25)
 
-    detail_tree = ttk.Treeview(display_window, columns=('ID', 'Name'), show='headings', style="Treeview", selectmode=tk.EXTENDED)
+    detail_tree = ttk.Treeview(display_window, columns=('ID', 'Name'), show='headings', style="Treeview")
     detail_tree.heading('ID', text='ID')
     detail_tree.heading('Name', text='Name')
     detail_tree.column('ID', width=100)
@@ -304,36 +285,39 @@ def display_registration_details():
     for row in student_data:
         detail_tree.insert('', 'end', values=(row[0], row[1]))
 
-    def remove_selected():
-        selected_items = detail_tree.selection()
-        if not selected_items:
+    def remove_entry():
+        selected_item = detail_tree.selection()
+        if not selected_item:
+            mess.showerror(title='Selection Error', message='Please select a student to remove.')
             return
 
+        item_values = detail_tree.item(selected_item, 'values')
+        if item_values:
+            id_to_remove = item_values[0]
+            delete_student_details(id_to_remove)
+            detail_tree.delete(selected_item)
+
+    def delete_student_details(student_id):
+        # Delete images associated with the student
+        image_path = f"TrainingImage/"
+        for file_name in os.listdir(image_path):
+            if file_name.startswith(f"{student_id}."):
+                os.remove(os.path.join(image_path, file_name))
+
+        # Delete student details from the database
         connection = get_db_connection()
         cursor = connection.cursor()
-
-        for item in selected_items:
-            item_values = detail_tree.item(item, 'values')
-            student_id, student_name = item_values
-            cursor.execute("DELETE FROM StudentDetails WHERE student_id = %s", (student_id,))
-            detail_tree.delete(item)
-
-            # Delete training images
-            training_image_dir = "TrainingImage"
-            for filename in os.listdir(training_image_dir):
-                if filename.startswith(f"{student_name}.{student_id}."):
-                    image_path = os.path.join(training_image_dir, filename)
-                    try:
-                        os.remove(image_path)
-                    except OSError as e:
-                        print(f"Error deleting image: {e}")
-
+        cursor.execute("DELETE FROM StudentDetails WHERE student_id = %s", (student_id,))
+        cursor.execute("DELETE FROM Attendance WHERE student_id = %s", (student_id,))
         connection.commit()
         cursor.close()
         connection.close()
 
-    remove_button = ttk.Button(display_window, text="Delete Selected", command=remove_selected)
+    remove_button = tk.Button(display_window, text="Remove Selected", command=remove_entry, fg="Black", bg="White",
+                              font=('Helvetica', 14, 'bold'))
     remove_button.pack(pady=10)
+
+
 
 def download_attendance():
     start_date = cal_start.get_date()
@@ -471,8 +455,6 @@ tv.heading('time', text='TIME')
 style = ttk.Style()
 style.configure("Treeview", rowheight=25, font=('Helvetica', 12))
 style.configure("Treeview.Heading", font=('Helvetica', 13, 'bold'))
-style.map('Treeview', background=[('selected', 'blue')], foreground=[('selected', 'white')])
-tv.tag_configure('present', background='lightgreen')
 
 scroll = ttk.Scrollbar(left_frame, orient='vertical', command=tv.yview)
 scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -489,13 +471,13 @@ head2.pack(fill=tk.X, pady=5)
 lbl = tk.Label(right_frame, text="Enter ID", fg="black", bg="#e0e0e0", font=('Helvetica', 16, 'bold'))
 lbl.pack(pady=5)
 
-txt = tk.Entry(right_frame, fg="White", font=('Helvetica', 14, 'bold'))
+txt = tk.Entry(right_frame, fg="white", font=('Helvetica', 14, 'bold'))
 txt.pack(pady=5)
 
 lbl2 = tk.Label(right_frame, text="Enter Name", fg="black", bg="#e0e0e0", font=('Helvetica', 16, 'bold'))
 lbl2.pack(pady=5)
 
-txt2 = tk.Entry(right_frame, fg="White", font=('Helvetica', 14, 'bold'))
+txt2 = tk.Entry(right_frame, fg="white", font=('Helvetica', 14, 'bold'))
 txt2.pack(pady=5)
 
 message1 = tk.Label(right_frame, text="1) Take Images  >>>  2) Save Profile", bg="#e0e0e0", fg="black",
@@ -505,29 +487,13 @@ message1.pack(pady=5)
 message = tk.Label(right_frame, text="", bg="#e0e0e0", fg="black", font=('Helvetica', 15, 'bold'))
 message.pack(pady=5)
 
-style = ttk.Style()
-style.configure("TButton",
-                padding=10,
-                font=('Helvetica', 14, 'bold'),
-                background="#4CAF50",  # Green button background
-                foreground="white",
-                relief="raised",
-                borderwidth=2)
-style.map("TButton",
-          background=[("active", "#45a049")],  # Darker green on hover
-          relief=[("pressed", "sunken")])  # Sunken effect on click
+takeImg = tk.Button(right_frame, text="Take Images", command=TakeImages, fg="Black", bg="White",
+                    font=('Helvetica', 14, 'bold'))
+takeImg.pack(pady=5)
 
-takeImg = ttk.Button(right_frame,
-                     text="Take Images",
-                     command=TakeImages,
-                     style="TButton")
-takeImg.pack(pady=10)  # Increased padding
-
-trainImg = ttk.Button(right_frame,
-                      text="Save Profile",
-                      command=TrainImages,
-                      style="TButton")
-trainImg.pack(pady=10)  # Increased padding
+trainImg = tk.Button(right_frame, text="Save Profile", command=TrainImages, fg="Black", bg="White",
+                     font=('Helvetica', 14, 'bold'))
+trainImg.pack(pady=5)
 
 quitWindow = tk.Button(right_frame, text="Quit", command=window.destroy, fg="black", bg="red",
                        font=('Helvetica', 14, 'bold'))
@@ -538,10 +504,10 @@ displayButton = tk.Button(right_frame, text="Display Details", command=display_r
 displayButton.pack(pady=5)
 
 # Date Picker and Download Button
-cal_start = DateEntry(right_frame, width=12, background='Black', foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
+cal_start = DateEntry(right_frame, width=12, background='White', foreground='Black', borderwidth=2, date_pattern='yyyy-mm-dd')
 cal_start.pack(pady=5)
 
-downloadButton = tk.Button(right_frame, text="Download Attendance by Date", command=download_attendance, fg="black", bg="orange",
+downloadButton = tk.Button(right_frame, text="Download Attendance by Date", command=download_attendance, fg="black", bg="White",
                            font=('Helvetica', 14, 'bold'))
 downloadButton.pack(pady=5)
 
